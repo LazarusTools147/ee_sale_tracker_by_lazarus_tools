@@ -1,0 +1,201 @@
+import streamlit as st
+from datetime import datetime
+import database as db
+import styles as s
+import logic_engine as le
+
+# 1. Page Configuration
+st.set_page_config(page_title="Lazarus Tools", page_icon="🎯", layout="wide")
+db.init_local_db()
+s.inject_global_css()
+
+# 2. Session State Setup
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+if "email" not in st.session_state:
+    st.session_state.email = ""
+if "is_admin" not in st.session_state:
+    st.session_state.is_admin = False
+
+# 3. Authentication Routing View
+if not st.session_state.logged_in:
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    s.render_logo("login")
+    st.markdown("<h2 style='text-align: center; margin-bottom: 24px; color: #ffffff;'>Sales Tracker KPI Command Center Login</h2>", unsafe_allow_html=True)
+    
+    _, login_col, _ = st.columns([1, 1.5, 1])
+    with login_col:
+        with st.form("auth_form", clear_on_submit=False):
+            email = st.text_input("Username / Email Address").strip()
+            password = st.text_input("Security Password", type="password")
+            login_clicked = st.form_submit_button("Authenticate into Command Center")
+            
+            if login_clicked:
+                success, admin_status = db.authenticate_user(email, password)
+                if success:
+                    st.session_state.logged_in = True
+                    st.session_state.email = email
+                    st.session_state.is_admin = admin_status
+                    st.rerun()
+                else:
+                    st.error("Authentication Failed. Invalid credentials or network error.")
+                    
+else:
+    # --- APPS/WORKSPACES INNER SCREEN ---
+    s.render_logo("sidebar")
+    st.sidebar.markdown(f"**User Profile:** \n`👤 {st.session_state.email}`")
+    st.sidebar.markdown("---")
+    
+    # Pull definitions from cloud for dynamic sync
+    kpi_defs = db.cloud_fetch_kpi_definitions()
+    
+    # Security Gated Navigation Menu
+    menu_options = ["🎯 KPI Tracker", "⚙️ My Profile & Shifts"]
+    if st.session_state.is_admin:
+        menu_options.append("🛠️ Admin Control Center")
+        
+    choice = st.sidebar.radio("Navigate Platform:", menu_options)
+    
+    st.sidebar.markdown("---")
+    if st.sidebar.button("Secure Logout"):
+        st.session_state.logged_in = False
+        st.session_state.email = ""
+        st.session_state.is_admin = False
+        st.rerun()
+        
+    user_email = st.session_state.email
+    user_targets, shifts_left = db.cloud_fetch_targets(user_email)
+    
+    # Ensure default values exist for targets based on definitions
+    for k in kpi_defs:
+        if k["db_code"] not in user_targets:
+            user_targets[k["db_code"]] = 0.0
+
+    if choice == "🎯 KPI Tracker":
+        st.markdown(f"# 🎯 KPI Pace & Command Center")
+        
+        # Fetch active sales records
+        raw_sales = db.cloud_fetch_transactions(user_email)
+        computed_actuals = le.compute_actuals(raw_sales, kpi_defs)
+        
+        # Header Block: Shift Details & Finish Shift Button
+        head_col1, head_col2 = st.columns([2, 1])
+        with head_col1:
+            st.markdown(f"### 🗓️ Shifts Remaining: **{shifts_left}**")
+        with head_col2:
+            if st.button("🏁 Finish Active Shift", use_container_width=True):
+                new_shifts = max(0, shifts_left - 1)
+                db.cloud_save_targets(user_email, user_targets, new_shifts)
+                st.success("Shift ended. Required pace values recalculated dynamically.")
+                st.rerun()
+                
+        st.markdown("---")
+        
+        # Render Dynamic Dashboard Cards
+        active_defs = [d for d in kpi_defs if d["is_active"] == 1]
+        card_cols = st.columns(len(active_defs) if len(active_defs) > 0 else 1)
+        for idx, defn in enumerate(active_defs):
+            with card_cols[idx]:
+                act = computed_actuals.get(defn["display_name"], 0)
+                targ = user_targets.get(defn["db_code"], 0.0)
+                s.render_kpi_block(defn["display_name"], act, targ, shifts_left)
+                
+        st.markdown("---")
+        
+        # Input Section with Screen Persistence Cache
+        st.markdown("### ✍️ Log New Transaction Details")
+        cached_notes_key = "current_input_notes"
+        cached_notes_val = db.force_load_field(user_email, cached_notes_key, "")
+        
+        with st.form("transaction_entry_form", clear_on_submit=True):
+            cat_options = [d["display_name"] for d in active_defs]
+            selected_cat = st.selectbox("Select Target Stream Category", cat_options if cat_options else ["No Metrics Active"])
+            notes_text = st.text_area("Transaction / Deal Notes", value=cached_notes_val)
+            
+            # Check for live keystroke mutations to update persistence cache before submission
+            if notes_text != cached_notes_val:
+                db.force_save_field(user_email, cached_notes_key, notes_text)
+                
+            submit_txn = st.form_submit_button("Post Transaction to Cloud Ledger")
+            
+            if submit_txn:
+                if not notes_text.strip():
+                    st.warning("Please record descriptive tracking notes to validate the ledger entry.")
+                else:
+                    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+                    db.cloud_log_transaction(user_email, selected_cat, notes_text.strip(), now_str)
+                    db.clear_floor_inputs(user_email)
+                    st.success(f"Successfully tracked: {selected_cat}")
+                    st.rerun()
+                    
+        st.markdown("---")
+        
+        # Chronological Transaction Folders Tree View
+        st.markdown("### 🗄️ Historical Monthly Archive Trees")
+        tree = le.build_chronological_tree(raw_sales)
+        
+        if not tree:
+            st.info("No verified cloud sales logged under this user profile for the active lifecycle.")
+        else:
+            for m_key, m_data in tree.items():
+                with st.expander(f"📁 {m_data['display']}", expanded=True):
+                    for w_title, w_days in m_data["weeks"].items():
+                        st.markdown(f"#### {w_title}")
+                        for d_title, txs in w_days.items():
+                            st.markdown(f"**{d_title}**")
+                            for tx in txs:
+                                t_col1, t_col2 = st.columns([4, 1])
+                                with t_col1:
+                                    st.markdown(f"`{tx['timestamp'].split()[1]}` | **{tx['category']}** — *{tx['notes']}*")
+                                with t_col2:
+                                    if st.button("🗑️ Void", key=f"del_{tx['id']}"):
+                                        db.cloud_delete_transaction(tx["id"])
+                                        st.warning("Ledger line record deleted.")
+                                        st.rerun()
+
+    elif choice == "⚙️ My Profile & Shifts":
+        st.markdown("# ⚙️ Target Settings & Profile Configurations")
+        st.markdown("Customize your personal run-rates and target configurations below.")
+        
+        with st.form("personal_targets_form"):
+            new_shifts_count = st.number_input("Total Monthly Shifts Remaining", min_value=0, max_value=31, value=shifts_left, step=1)
+            updated_targets = {}
+            
+            for defn in kpi_defs:
+                cur_t = user_targets.get(defn["db_code"], 0.0)
+                updated_targets[defn["db_code"]] = st.number_input(f"Target Volume for {defn['display_name']}", min_value=0, value=int(cur_t), step=1)
+                
+            save_profile_settings = st.form_submit_button("Update Profile Configurations")
+            if save_profile_settings:
+                db.cloud_save_targets(user_email, updated_targets, new_shifts_count)
+                st.success("Personal profile configurations synchronized to Supabase server.")
+                st.rerun()
+
+    elif choice == "🛠️ Admin Control Center" and st.session_state.is_admin:
+        st.markdown("# 🛠️ Master Administrative Control Deck")
+        st.markdown("Global corporate rules configurations. Updates deployed here apply instantly across all field clients.")
+        
+        updated_defs = []
+        for item in kpi_defs:
+            st.markdown(f"### Metric: **{item['display_name']}**")
+            col_a, col_b, col_c = st.columns(3)
+            with col_a:
+                d_name = st.text_input(f"Rename Display Label", value=item["display_name"], key=f"nm_{item['id']}")
+            with col_b:
+                feeds_vol = st.checkbox("Absorbs into Master Volume Count", value=bool(item["feeds_master_volume"]), key=f"f_vol_{item['id']}")
+            with col_c:
+                active_stat = st.checkbox("Metric Active on Sales Floor", value=bool(item["is_active"]), key=f"act_{item['id']}")
+            
+            updated_defs.append({
+                "id": item["id"],
+                "display_name": d_name,
+                "db_code": item["db_code"],
+                "feeds_master_volume": int(feeds_vol),
+                "is_active": int(active_stat)
+            })
+            st.markdown("---")
+            
+        if st.button("⚡ Push Corporate Configuration Update Globally", use_container_width=True):
+            db.cloud_save_kpi_definitions(updated_defs)
+            st.success("Global corporate KPI mappings updated successfully.")
+            st.rerun()
