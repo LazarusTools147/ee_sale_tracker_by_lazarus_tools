@@ -19,6 +19,9 @@ if "is_admin" not in st.session_state:
     st.session_state.is_admin = False
 if "active_log_tile" not in st.session_state:
     st.session_state.active_log_tile = None
+# --- NEW: Edit Mode Safeguard State ---
+if "edit_mode" not in st.session_state:
+    st.session_state.edit_mode = False
 
 # 3. Authentication Routing View
 if not st.session_state.logged_in:
@@ -63,6 +66,7 @@ else:
         st.session_state.email = ""
         st.session_state.is_admin = False
         st.session_state.active_log_tile = None
+        st.session_state.edit_mode = False
         st.rerun()
         
     user_email = st.session_state.email
@@ -129,8 +133,6 @@ else:
                     subtype = st.radio("Select Device Type:", ["Handset", "Tablet", "Watch", "MBB", "SIM"], horizontal=True)
                     
                 notes_text = st.text_input("Transaction / Deal Notes (Optional)", placeholder="Customer initials or specific plan...")
-                
-                # --- NEW: Custom Date Picker defaults to today ---
                 log_date = st.date_input("Transaction Date", value=datetime.today().date())
                 
                 form_col1, form_col2 = st.columns([1, 1])
@@ -141,7 +143,6 @@ else:
                 
                 if submit_txn:
                     final_category = active_tile if not subtype else f"{active_tile} - {subtype}"
-                    # Merge the chosen date with a hidden timestamp to maintain calendar sorting accuracy
                     hidden_time_str = datetime.now().strftime("%H:%M")
                     now_str = f"{log_date.strftime('%Y-%m-%d')} {hidden_time_str}"
                     
@@ -157,7 +158,23 @@ else:
                     
         st.markdown("---")
         
-        st.markdown("### 🗄️ Deep-Dive Calendar & History")
+        # --- NEW: Safegaurded Calendar Header ---
+        cal_col1, cal_col2 = st.columns([3, 1])
+        with cal_col1:
+            st.markdown("### 🗄️ Deep-Dive Calendar & History")
+        with cal_col2:
+            if st.session_state.edit_mode:
+                if st.button("🔒 Lock Settings", use_container_width=True):
+                    st.session_state.edit_mode = False
+                    st.rerun()
+            else:
+                if st.button("⚙️ Unlock Edit/Void Mode", use_container_width=True):
+                    st.session_state.edit_mode = True
+                    st.rerun()
+
+        if st.session_state.edit_mode:
+            st.warning("⚠️ **Void Mode Active:** You can now delete incorrect entries. Remember to lock settings when finished.")
+
         tree = le.build_chronological_tree(raw_sales)
         
         if not tree:
@@ -196,15 +213,16 @@ else:
                             st.markdown(f"**{d_title}** 📊 *({tally_string})*")
                             
                             for tx in txs:
-                                # Clean 2-column layout: Text on the left, simple Void button on the right
                                 t_col1, t_col2 = st.columns([5, 1])
                                 with t_col1:
                                     st.markdown(f"**{tx['category']}** — *{tx['notes']}*")
                                 with t_col2:
-                                    if st.button("🗑️ Void", key=f"del_btn_{tx['id']}"):
-                                        db.cloud_delete_transaction(tx["id"])
-                                        st.warning("Ledger line record deleted.")
-                                        st.rerun()
+                                    # --- NEW: Only show the Void button if Edit Mode is Unlocked ---
+                                    if st.session_state.edit_mode:
+                                        if st.button("🗑️ Void", key=f"del_btn_{tx['id']}"):
+                                            db.cloud_delete_transaction(tx["id"])
+                                            st.warning("Ledger line record deleted.")
+                                            st.rerun()
 
     elif choice == "⚙️ My Profile & Shifts":
         st.markdown("# ⚙️ Target Settings & Profile Configurations")
