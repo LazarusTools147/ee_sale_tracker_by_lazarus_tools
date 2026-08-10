@@ -1,5 +1,6 @@
 import streamlit as st
 from datetime import datetime
+import time
 import database as db
 import styles as s
 import logic_engine as le
@@ -25,7 +26,7 @@ if "edit_txn_id" not in st.session_state:
 if not st.session_state.logged_in:
     st.markdown("<br><br>", unsafe_allow_html=True)
     s.render_logo("login")
-    st.markdown("<h2 style='text-align: center; margin-bottom: 24px; color: #ffffff;'>Sales Tracker KPI Command Center Login</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='text-align: center; margin-bottom: 24px; color: #ffffff;'>Lazarus Tools Command Center</h2>", unsafe_allow_html=True)
     
     _, login_col, _ = st.columns([1, 1.5, 1])
     with login_col:
@@ -50,10 +51,8 @@ else:
     st.sidebar.markdown(f"**User Profile:** \n`👤 {st.session_state.email}`")
     st.sidebar.markdown("---")
     
-    # Pull definitions from cloud for dynamic sync
     kpi_defs = db.cloud_fetch_kpi_definitions()
     
-    # Security Gated Navigation Menu
     menu_options = ["🎯 KPI Tracker", "⚙️ My Profile & Shifts"]
     if st.session_state.is_admin:
         menu_options.append("🛠️ Admin Control Center")
@@ -70,9 +69,8 @@ else:
         st.rerun()
         
     user_email = st.session_state.email
-    user_targets, shifts_left = db.cloud_fetch_targets(user_email)
+    user_targets, shifts_left, period_start = db.cloud_fetch_targets(user_email)
     
-    # Ensure default values exist for targets based on definitions
     for k in kpi_defs:
         if k["db_code"] not in user_targets:
             user_targets[k["db_code"]] = 0.0
@@ -80,11 +78,9 @@ else:
     if choice == "🎯 KPI Tracker":
         st.markdown(f"# 🎯 KPI Pace & Command Center")
         
-        # Fetch active sales records
         raw_sales = db.cloud_fetch_transactions(user_email)
-        computed_actuals = le.compute_actuals(raw_sales, kpi_defs)
+        computed_actuals = le.compute_actuals(raw_sales, kpi_defs, period_start)
         
-        # Header Block: Shift Details & Finish Shift Button
         head_col1, head_col2 = st.columns([2, 1])
         with head_col1:
             st.markdown(f"### 🗓️ Shifts Remaining: **{shifts_left}**")
@@ -97,7 +93,6 @@ else:
                 
         st.markdown("---")
         
-        # Render Dynamic Dashboard Cards
         active_defs = [d for d in kpi_defs if d["is_active"] == 1]
         card_cols = st.columns(len(active_defs) if len(active_defs) > 0 else 1)
         for idx, defn in enumerate(active_defs):
@@ -108,10 +103,8 @@ else:
                 
         st.markdown("---")
         
-        # BINGO GRID QUICK-LOG SECTION
         st.markdown("### 🎲 Quick-Log Bingo Grid")
         
-        # Layout the 5 main tiles
         tile_cols = st.columns(5)
         with tile_cols[0]:
             if st.button("🎮 Gaming", use_container_width=True): st.session_state.active_log_tile = "Gaming"
@@ -124,7 +117,6 @@ else:
         with tile_cols[4]:
             if st.button("✨ New Connections", use_container_width=True): st.session_state.active_log_tile = "New Connections"
             
-        # Conditionally render the drill-down if a tile is clicked
         if st.session_state.active_log_tile:
             active_tile = st.session_state.active_log_tile
             st.markdown(f"#### 📝 Logging Details: {active_tile}")
@@ -162,7 +154,6 @@ else:
                     
         st.markdown("---")
         
-        # Chronological Transaction Folders Tree View
         st.markdown("### 🗄️ Deep-Dive Calendar & History")
         tree = le.build_chronological_tree(raw_sales)
         
@@ -170,12 +161,30 @@ else:
             st.info("No verified cloud sales logged under this user profile for the active lifecycle.")
         else:
             for m_key, m_data in tree.items():
-                with st.expander(f"📁 {m_data['display']}", expanded=True):
+                
+                monthly_tally = {}
+                for w_title, w_days in m_data["weeks"].items():
+                    for d_title, txs in w_days.items():
+                        for tx in txs:
+                            parent_cat = tx['category'].split(" - ")[0].strip()
+                            monthly_tally[parent_cat] = monthly_tally.get(parent_cat, 0) + 1
+                
+                m_tally_str = " • ".join([f"{count} {cat}" for cat, count in monthly_tally.items()])
+                
+                with st.expander(f"📁 {m_data['display']}  [ {m_tally_str} ]", expanded=True):
                     for w_title, w_days in m_data["weeks"].items():
-                        st.markdown(f"#### 📅 {w_title}")
+                        
+                        weekly_tally = {}
+                        for d_title, txs in w_days.items():
+                            for tx in txs:
+                                parent_cat = tx['category'].split(" - ")[0].strip()
+                                weekly_tally[parent_cat] = weekly_tally.get(parent_cat, 0) + 1
+                                
+                        w_tally_str = " • ".join([f"{count} {cat}" for cat, count in weekly_tally.items()])
+                        
+                        st.markdown(f"#### 📅 {w_title}  *( {w_tally_str} )*")
                         
                         for d_title, txs in w_days.items():
-                            # Calculate the daily summary strings (e.g., "3 HBB - New", "1 Gaming")
                             daily_tally = {}
                             for tx in txs:
                                 daily_tally[tx['category']] = daily_tally.get(tx['category'], 0) + 1
@@ -183,10 +192,8 @@ else:
                             tally_string = " | ".join([f"**{count}** {cat}" for cat, count in daily_tally.items()])
                             st.markdown(f"**{d_title}** 📊 *({tally_string})*")
                             
-                            # Render individual transaction lines
                             for tx in txs:
                                 if st.session_state.edit_txn_id == tx['id']:
-                                    # --- EDIT MODE ---
                                     with st.form(f"edit_form_{tx['id']}"):
                                         st.write(f"✏️ **Editing Record:** `{tx['id'][:8]}`")
                                         try:
@@ -200,12 +207,15 @@ else:
                                         with e_col2:
                                             new_time = st.time_input("Time", value=dt_obj.time())
                                             
-                                        # Let them pick a completely new category if they misclicked
                                         all_cats = ["Gaming", "HBB - New", "HBB - Regrade", "TV - New", "TV - Regrade", 
                                                     "Upgrades - Handset", "Upgrades - Tablet", "Upgrades - Watch", "Upgrades - MBB", "Upgrades - SIM",
                                                     "New Connections - Handset", "New Connections - Tablet", "New Connections - Watch", "New Connections - MBB", "New Connections - SIM"]
                                         
-                                        current_idx = all_cats.index(tx['category']) if tx['category'] in all_cats else 0
+                                        try:
+                                            current_idx = all_cats.index(tx['category'])
+                                        except ValueError:
+                                            current_idx = 0
+                                            
                                         new_cat = st.selectbox("Update Category", options=all_cats, index=current_idx)
                                         new_notes = st.text_input("Update Notes", value=tx['notes'])
                                         
@@ -221,7 +231,6 @@ else:
                                                 st.session_state.edit_txn_id = None
                                                 st.rerun()
                                 else:
-                                    # --- NORMAL VIEW MODE ---
                                     t_col1, t_col2, t_col3 = st.columns([5, 1, 1])
                                     with t_col1:
                                         st.markdown(f"`{tx['timestamp'].split()[1]}` | **{tx['category']}** — *{tx['notes']}*")
@@ -252,6 +261,16 @@ else:
                 db.cloud_save_targets(user_email, updated_targets, new_shifts_count)
                 st.success("Personal profile configurations synchronized to Supabase server.")
                 st.rerun()
+
+        st.markdown("---")
+        
+        st.markdown("### 🔄 Start a New Month")
+        st.info("Finishing the month will reset your Dashboard actuals to zero so you can start fresh. All of your past sales will still remain perfectly visible in the Deep-Dive Calendar.")
+        if st.button("🚨 Finish Month & Reset Actuals"):
+            new_period_start = time.time()
+            db.cloud_save_period_start(user_email, new_period_start)
+            st.success("New month started! Dashboard actuals have been cleared.")
+            st.rerun()
 
     elif choice == "🛠️ Admin Control Center" and st.session_state.is_admin:
         st.markdown("# 🛠️ Master Administrative Control Deck")
