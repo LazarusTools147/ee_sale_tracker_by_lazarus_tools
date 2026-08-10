@@ -16,6 +16,10 @@ if "email" not in st.session_state:
     st.session_state.email = ""
 if "is_admin" not in st.session_state:
     st.session_state.is_admin = False
+if "active_log_tile" not in st.session_state:
+    st.session_state.active_log_tile = None
+if "edit_txn_id" not in st.session_state:
+    st.session_state.edit_txn_id = None
 
 # 3. Authentication Routing View
 if not st.session_state.logged_in:
@@ -61,6 +65,8 @@ else:
         st.session_state.logged_in = False
         st.session_state.email = ""
         st.session_state.is_admin = False
+        st.session_state.active_log_tile = None
+        st.session_state.edit_txn_id = None
         st.rerun()
         
     user_email = st.session_state.email
@@ -102,36 +108,62 @@ else:
                 
         st.markdown("---")
         
-        # Input Section with Screen Persistence Cache
-        st.markdown("### ✍️ Log New Transaction Details")
-        cached_notes_key = "current_input_notes"
-        cached_notes_val = db.force_load_field(user_email, cached_notes_key, "")
+        # BINGO GRID QUICK-LOG SECTION
+        st.markdown("### 🎲 Quick-Log Bingo Grid")
         
-        with st.form("transaction_entry_form", clear_on_submit=True):
-            cat_options = [d["display_name"] for d in active_defs]
-            selected_cat = st.selectbox("Select Target Stream Category", cat_options if cat_options else ["No Metrics Active"])
-            notes_text = st.text_area("Transaction / Deal Notes", value=cached_notes_val)
+        # Layout the 5 main tiles
+        tile_cols = st.columns(5)
+        with tile_cols[0]:
+            if st.button("🎮 Gaming", use_container_width=True): st.session_state.active_log_tile = "Gaming"
+        with tile_cols[1]:
+            if st.button("📡 HBB", use_container_width=True): st.session_state.active_log_tile = "HBB"
+        with tile_cols[2]:
+            if st.button("📺 TV", use_container_width=True): st.session_state.active_log_tile = "TV"
+        with tile_cols[3]:
+            if st.button("⬆️ Upgrades", use_container_width=True): st.session_state.active_log_tile = "Upgrades"
+        with tile_cols[4]:
+            if st.button("✨ New Connections", use_container_width=True): st.session_state.active_log_tile = "New Connections"
             
-            # Check for live keystroke mutations to update persistence cache before submission
-            if notes_text != cached_notes_val:
-                db.force_save_field(user_email, cached_notes_key, notes_text)
+        # Conditionally render the drill-down if a tile is clicked
+        if st.session_state.active_log_tile:
+            active_tile = st.session_state.active_log_tile
+            st.markdown(f"#### 📝 Logging Details: {active_tile}")
+            
+            with st.form("bingo_drilldown_form"):
+                subtype = None
                 
-            submit_txn = st.form_submit_button("Post Transaction to Cloud Ledger")
-            
-            if submit_txn:
-                if not notes_text.strip():
-                    st.warning("Please record descriptive tracking notes to validate the ledger entry.")
-                else:
+                if active_tile == "Gaming":
+                    st.info("Gaming units log directly as Non-Core items.")
+                elif active_tile in ["HBB", "TV"]:
+                    subtype = st.radio(f"Is this {active_tile} New or Regrade?", ["New", "Regrade"], horizontal=True)
+                elif active_tile in ["Upgrades", "New Connections"]:
+                    subtype = st.radio("Select Device Type:", ["Handset", "Tablet", "Watch", "MBB", "SIM"], horizontal=True)
+                    
+                notes_text = st.text_input("Transaction / Deal Notes (Optional)", placeholder="Customer initials or specific plan...")
+                
+                form_col1, form_col2 = st.columns([1, 1])
+                with form_col1:
+                    submit_txn = st.form_submit_button("✅ Post to Ledger")
+                with form_col2:
+                    cancel_btn = st.form_submit_button("❌ Cancel")
+                
+                if submit_txn:
+                    final_category = active_tile if not subtype else f"{active_tile} - {subtype}"
                     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-                    db.cloud_log_transaction(user_email, selected_cat, notes_text.strip(), now_str)
-                    db.clear_floor_inputs(user_email)
-                    st.success(f"Successfully tracked: {selected_cat}")
+                    db.cloud_log_transaction(user_email, final_category, notes_text.strip(), now_str)
+                    
+                    st.session_state.active_log_tile = None
+                    st.success(f"Successfully tracked: {final_category}")
+                    st.rerun()
+                    
+                if cancel_btn:
+                    st.session_state.active_log_tile = None
                     st.rerun()
                     
         st.markdown("---")
         
         # Chronological Transaction Folders Tree View
-        st.markdown("### 🗄️ Historical Monthly Archive Trees")
+        st.markdown("### 🗄️ Deep-Dive Calendar & History")
         tree = le.build_chronological_tree(raw_sales)
         
         if not tree:
@@ -140,18 +172,68 @@ else:
             for m_key, m_data in tree.items():
                 with st.expander(f"📁 {m_data['display']}", expanded=True):
                     for w_title, w_days in m_data["weeks"].items():
-                        st.markdown(f"#### {w_title}")
+                        st.markdown(f"#### 📅 {w_title}")
+                        
                         for d_title, txs in w_days.items():
-                            st.markdown(f"**{d_title}**")
+                            # Calculate the daily summary strings (e.g., "3 HBB - New", "1 Gaming")
+                            daily_tally = {}
                             for tx in txs:
-                                t_col1, t_col2 = st.columns([4, 1])
-                                with t_col1:
-                                    st.markdown(f"`{tx['timestamp'].split()[1]}` | **{tx['category']}** — *{tx['notes']}*")
-                                with t_col2:
-                                    if st.button("🗑️ Void", key=f"del_{tx['id']}"):
-                                        db.cloud_delete_transaction(tx["id"])
-                                        st.warning("Ledger line record deleted.")
-                                        st.rerun()
+                                daily_tally[tx['category']] = daily_tally.get(tx['category'], 0) + 1
+                            
+                            tally_string = " | ".join([f"**{count}** {cat}" for cat, count in daily_tally.items()])
+                            st.markdown(f"**{d_title}** 📊 *({tally_string})*")
+                            
+                            # Render individual transaction lines
+                            for tx in txs:
+                                if st.session_state.edit_txn_id == tx['id']:
+                                    # --- EDIT MODE ---
+                                    with st.form(f"edit_form_{tx['id']}"):
+                                        st.write(f"✏️ **Editing Record:** `{tx['id'][:8]}`")
+                                        try:
+                                            dt_obj = datetime.strptime(tx['timestamp'], "%Y-%m-%d %H:%M")
+                                        except:
+                                            dt_obj = datetime.now()
+                                            
+                                        e_col1, e_col2 = st.columns(2)
+                                        with e_col1:
+                                            new_date = st.date_input("Date", value=dt_obj.date())
+                                        with e_col2:
+                                            new_time = st.time_input("Time", value=dt_obj.time())
+                                            
+                                        # Let them pick a completely new category if they misclicked
+                                        all_cats = ["Gaming", "HBB - New", "HBB - Regrade", "TV - New", "TV - Regrade", 
+                                                    "Upgrades - Handset", "Upgrades - Tablet", "Upgrades - Watch", "Upgrades - MBB", "Upgrades - SIM",
+                                                    "New Connections - Handset", "New Connections - Tablet", "New Connections - Watch", "New Connections - MBB", "New Connections - SIM"]
+                                        
+                                        current_idx = all_cats.index(tx['category']) if tx['category'] in all_cats else 0
+                                        new_cat = st.selectbox("Update Category", options=all_cats, index=current_idx)
+                                        new_notes = st.text_input("Update Notes", value=tx['notes'])
+                                        
+                                        s_col1, s_col2 = st.columns(2)
+                                        with s_col1:
+                                            if st.form_submit_button("💾 Save Changes"):
+                                                new_timestamp_str = f"{new_date.strftime('%Y-%m-%d')} {new_time.strftime('%H:%M')}"
+                                                db.cloud_update_transaction(tx['id'], new_cat, new_notes, new_timestamp_str)
+                                                st.session_state.edit_txn_id = None
+                                                st.rerun()
+                                        with s_col2:
+                                            if st.form_submit_button("Cancel"):
+                                                st.session_state.edit_txn_id = None
+                                                st.rerun()
+                                else:
+                                    # --- NORMAL VIEW MODE ---
+                                    t_col1, t_col2, t_col3 = st.columns([5, 1, 1])
+                                    with t_col1:
+                                        st.markdown(f"`{tx['timestamp'].split()[1]}` | **{tx['category']}** — *{tx['notes']}*")
+                                    with t_col2:
+                                        if st.button("✏️ Edit", key=f"edit_btn_{tx['id']}"):
+                                            st.session_state.edit_txn_id = tx['id']
+                                            st.rerun()
+                                    with t_col3:
+                                        if st.button("🗑️ Void", key=f"del_btn_{tx['id']}"):
+                                            db.cloud_delete_transaction(tx["id"])
+                                            st.warning("Ledger line record deleted.")
+                                            st.rerun()
 
     elif choice == "⚙️ My Profile & Shifts":
         st.markdown("# ⚙️ Target Settings & Profile Configurations")

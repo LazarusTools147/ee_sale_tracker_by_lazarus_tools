@@ -56,6 +56,24 @@ def inject_global_css():
             font-weight: 600;
             color: #6366f1;
         }
+        
+        /* Custom Button Styling for the Bingo Grid Tiles */
+        div.stButton > button {
+            background-color: #1e2433;
+            color: #ffffff;
+            border: 1px solid #2e374d;
+            border-radius: 8px;
+            padding: 12px 24px;
+            font-weight: 600;
+            transition: all 0.2s ease-in-out;
+            width: 100%;
+        }
+        div.stButton > button:hover {
+            background-color: #2e374d;
+            border-color: #6366f1;
+            color: #ffffff;
+            transform: translateY(-1px);
+        }
         </style>
     """, unsafe_allow_html=True)
 

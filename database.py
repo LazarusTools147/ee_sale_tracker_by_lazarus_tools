@@ -87,6 +87,12 @@ def cloud_fetch_transactions(email: str):
     response = supabase.table("sales_tracker").select("*").eq("email", email).order("timestamp", desc=True).execute()
     return response.data if response.data else []
 
+def cloud_update_transaction(tx_id: int, new_category: str, new_notes: str, new_timestamp: str):
+    """Overwrites an existing cloud ledger record with corrected data (e.g. retroactive date fixes)."""
+    supabase = get_supabase()
+    data = {"category": new_category, "notes": new_notes, "timestamp": new_timestamp}
+    supabase.table("sales_tracker").update(data).eq("id", tx_id).execute()
+
 def cloud_delete_transaction(tx_id: int):
     """Permanently clears a specific record from the cloud ledger via its unique identifier."""
     supabase = get_supabase()
