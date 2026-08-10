@@ -26,7 +26,7 @@ if "edit_txn_id" not in st.session_state:
 if not st.session_state.logged_in:
     st.markdown("<br><br>", unsafe_allow_html=True)
     s.render_logo("login")
-    st.markdown("<h2 style='text-align: center; margin-bottom: 24px; color: #ffffff;'>Lazarus Tools Command Center</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='text-align: center; margin-bottom: 24px; color: #ffffff;'>Sales Tracker KPI Command Center Login</h2>", unsafe_allow_html=True)
     
     _, login_col, _ = st.columns([1, 1.5, 1])
     with login_col:
@@ -162,6 +162,7 @@ else:
         else:
             for m_key, m_data in tree.items():
                 
+                # --- Monthly Summary Tally Math ---
                 monthly_tally = {}
                 for w_title, w_days in m_data["weeks"].items():
                     for d_title, txs in w_days.items():
@@ -174,6 +175,7 @@ else:
                 with st.expander(f"📁 {m_data['display']}  [ {m_tally_str} ]", expanded=True):
                     for w_title, w_days in m_data["weeks"].items():
                         
+                        # --- Weekly Summary Tally Math ---
                         weekly_tally = {}
                         for d_title, txs in w_days.items():
                             for tx in txs:
@@ -211,6 +213,7 @@ else:
                                                     "Upgrades - Handset", "Upgrades - Tablet", "Upgrades - Watch", "Upgrades - MBB", "Upgrades - SIM",
                                                     "New Connections - Handset", "New Connections - Tablet", "New Connections - Watch", "New Connections - MBB", "New Connections - SIM"]
                                         
+                                        # Added safe Error Protection block so old legacy data can't crash the edit menu
                                         try:
                                             current_idx = all_cats.index(tx['category'])
                                         except ValueError:
@@ -264,6 +267,7 @@ else:
 
         st.markdown("---")
         
+        # --- NEW: START A NEW MONTH BUTTON ---
         st.markdown("### 🔄 Start a New Month")
         st.info("Finishing the month will reset your Dashboard actuals to zero so you can start fresh. All of your past sales will still remain perfectly visible in the Deep-Dive Calendar.")
         if st.button("🚨 Finish Month & Reset Actuals"):

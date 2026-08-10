@@ -100,13 +100,22 @@ def cloud_delete_transaction(tx_id: int):
 
 # --- PERFORMANCE TARGETS & RUN-RATES (SUPABASE) ---
 def cloud_fetch_targets(email: str):
-    """Gathers individualized volume targets and remaining shift tallies from cloud records."""
+    """Gathers individualized volume targets and tracking periods from cloud records."""
     supabase = get_supabase()
     t_res = supabase.table("kpi_settings").select("kpi_key", "target_val").eq("email", email).execute()
     s_res = supabase.table("performance_targets").select("shifts_left").eq("email", email).execute()
-    targets = {row["kpi_key"]: float(row["target_val"]) for row in t_res.data} if t_res.data else {}
+    
+    targets = {}
+    period_start = 0.0 # Defaults to 0, meaning 'all time' if a month hasn't been finished yet.
+    if t_res.data:
+        for row in t_res.data:
+            if row["kpi_key"] == "PERIOD_START":
+                period_start = float(row["target_val"])
+            else:
+                targets[row["kpi_key"]] = float(row["target_val"])
+                
     shifts = s_res.data[0]["shifts_left"] if s_res.data else 1
-    return targets, shifts
+    return targets, shifts, period_start
 
 def cloud_save_targets(email: str, target_dict: dict, shifts_left: int):
     """Saves custom operational configurations securely back to the cloud instance."""
@@ -114,6 +123,11 @@ def cloud_save_targets(email: str, target_dict: dict, shifts_left: int):
     for kpi, val in target_dict.items():
         supabase.table("kpi_settings").upsert({"email": email, "kpi_key": kpi, "target_val": val}).execute()
     supabase.table("performance_targets").upsert({"email": email, "shifts_left": shifts_left}).execute()
+
+def cloud_save_period_start(email: str, timestamp: float):
+    """Saves a timestamp that acts as the cutoff point for the current active tracking month."""
+    supabase = get_supabase()
+    supabase.table("kpi_settings").upsert({"email": email, "kpi_key": "PERIOD_START", "target_val": timestamp}).execute()
 
 # --- GLOBAL ADMIN CONTROL CENTER FUNCTIONS (SUPABASE) ---
 def cloud_fetch_kpi_definitions():
