@@ -26,7 +26,7 @@ if "edit_txn_id" not in st.session_state:
 if not st.session_state.logged_in:
     st.markdown("<br><br>", unsafe_allow_html=True)
     s.render_logo("login")
-    st.markdown("<h2 style='text-align: center; margin-bottom: 24px; color: #ffffff;'>Sales Tracker KPI Command Center Login</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='text-align: center; margin-bottom: 24px; color: #ffffff;'>Lazarus Tools Command Center</h2>", unsafe_allow_html=True)
     
     _, login_col, _ = st.columns([1, 1.5, 1])
     with login_col:
@@ -141,6 +141,7 @@ else:
                 
                 if submit_txn:
                     final_category = active_tile if not subtype else f"{active_tile} - {subtype}"
+                    # Keep time in the background string for sorting, but hide it visually
                     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
                     db.cloud_log_transaction(user_email, final_category, notes_text.strip(), now_str)
                     
@@ -162,7 +163,6 @@ else:
         else:
             for m_key, m_data in tree.items():
                 
-                # --- Monthly Summary Tally Math ---
                 monthly_tally = {}
                 for w_title, w_days in m_data["weeks"].items():
                     for d_title, txs in w_days.items():
@@ -175,7 +175,6 @@ else:
                 with st.expander(f"📁 {m_data['display']}  [ {m_tally_str} ]", expanded=True):
                     for w_title, w_days in m_data["weeks"].items():
                         
-                        # --- Weekly Summary Tally Math ---
                         weekly_tally = {}
                         for d_title, txs in w_days.items():
                             for tx in txs:
@@ -198,26 +197,29 @@ else:
                                 if st.session_state.edit_txn_id == tx['id']:
                                     with st.form(f"edit_form_{tx['id']}"):
                                         st.write(f"✏️ **Editing Record:** `{tx['id'][:8]}`")
+                                        
+                                        # Parse existing timestamp safely
                                         try:
                                             dt_obj = datetime.strptime(tx['timestamp'], "%Y-%m-%d %H:%M")
+                                            hidden_time_str = dt_obj.strftime('%H:%M')
                                         except:
                                             dt_obj = datetime.now()
+                                            hidden_time_str = "00:00"
                                             
-                                        e_col1, e_col2 = st.columns(2)
-                                        with e_col1:
-                                            new_date = st.date_input("Date", value=dt_obj.date())
-                                        with e_col2:
-                                            new_time = st.time_input("Time", value=dt_obj.time())
+                                        # Only show the Date input (Time is stripped out)
+                                        new_date = st.date_input("Transaction Date", value=dt_obj.date())
                                             
+                                        # Bulletproof Category List Builder
                                         all_cats = ["Gaming", "HBB - New", "HBB - Regrade", "TV - New", "TV - Regrade", 
                                                     "Upgrades - Handset", "Upgrades - Tablet", "Upgrades - Watch", "Upgrades - MBB", "Upgrades - SIM",
                                                     "New Connections - Handset", "New Connections - Tablet", "New Connections - Watch", "New Connections - MBB", "New Connections - SIM"]
                                         
-                                        # Added safe Error Protection block so old legacy data can't crash the edit menu
-                                        try:
-                                            current_idx = all_cats.index(tx['category'])
-                                        except ValueError:
-                                            current_idx = 0
+                                        current_cat = tx['category']
+                                        # If for any reason the database category isn't perfectly in the list, force it in so it doesn't default to Gaming
+                                        if current_cat not in all_cats:
+                                            all_cats.insert(0, current_cat)
+                                            
+                                        current_idx = all_cats.index(current_cat)
                                             
                                         new_cat = st.selectbox("Update Category", options=all_cats, index=current_idx)
                                         new_notes = st.text_input("Update Notes", value=tx['notes'])
@@ -225,7 +227,8 @@ else:
                                         s_col1, s_col2 = st.columns(2)
                                         with s_col1:
                                             if st.form_submit_button("💾 Save Changes"):
-                                                new_timestamp_str = f"{new_date.strftime('%Y-%m-%d')} {new_time.strftime('%H:%M')}"
+                                                # Re-attach the hidden time so the database sorting stays intact
+                                                new_timestamp_str = f"{new_date.strftime('%Y-%m-%d')} {hidden_time_str}"
                                                 db.cloud_update_transaction(tx['id'], new_cat, new_notes, new_timestamp_str)
                                                 st.session_state.edit_txn_id = None
                                                 st.rerun()
@@ -236,7 +239,8 @@ else:
                                 else:
                                     t_col1, t_col2, t_col3 = st.columns([5, 1, 1])
                                     with t_col1:
-                                        st.markdown(f"`{tx['timestamp'].split()[1]}` | **{tx['category']}** — *{tx['notes']}*")
+                                        # Removed the time printout here, just showing Category and Notes
+                                        st.markdown(f"**{tx['category']}** — *{tx['notes']}*")
                                     with t_col2:
                                         if st.button("✏️ Edit", key=f"edit_btn_{tx['id']}"):
                                             st.session_state.edit_txn_id = tx['id']
@@ -267,7 +271,6 @@ else:
 
         st.markdown("---")
         
-        # --- NEW: START A NEW MONTH BUTTON ---
         st.markdown("### 🔄 Start a New Month")
         st.info("Finishing the month will reset your Dashboard actuals to zero so you can start fresh. All of your past sales will still remain perfectly visible in the Deep-Dive Calendar.")
         if st.button("🚨 Finish Month & Reset Actuals"):
