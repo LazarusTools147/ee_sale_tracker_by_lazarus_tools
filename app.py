@@ -19,8 +19,6 @@ if "is_admin" not in st.session_state:
     st.session_state.is_admin = False
 if "active_log_tile" not in st.session_state:
     st.session_state.active_log_tile = None
-if "edit_txn_id" not in st.session_state:
-    st.session_state.edit_txn_id = None
 
 # 3. Authentication Routing View
 if not st.session_state.logged_in:
@@ -65,7 +63,6 @@ else:
         st.session_state.email = ""
         st.session_state.is_admin = False
         st.session_state.active_log_tile = None
-        st.session_state.edit_txn_id = None
         st.rerun()
         
     user_email = st.session_state.email
@@ -133,6 +130,9 @@ else:
                     
                 notes_text = st.text_input("Transaction / Deal Notes (Optional)", placeholder="Customer initials or specific plan...")
                 
+                # --- NEW: Custom Date Picker defaults to today ---
+                log_date = st.date_input("Transaction Date", value=datetime.today().date())
+                
                 form_col1, form_col2 = st.columns([1, 1])
                 with form_col1:
                     submit_txn = st.form_submit_button("✅ Post to Ledger")
@@ -141,12 +141,14 @@ else:
                 
                 if submit_txn:
                     final_category = active_tile if not subtype else f"{active_tile} - {subtype}"
-                    # Keep time in the background string for sorting, but hide it visually
-                    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+                    # Merge the chosen date with a hidden timestamp to maintain calendar sorting accuracy
+                    hidden_time_str = datetime.now().strftime("%H:%M")
+                    now_str = f"{log_date.strftime('%Y-%m-%d')} {hidden_time_str}"
+                    
                     db.cloud_log_transaction(user_email, final_category, notes_text.strip(), now_str)
                     
                     st.session_state.active_log_tile = None
-                    st.success(f"Successfully tracked: {final_category}")
+                    st.success(f"Successfully tracked: {final_category} on {log_date.strftime('%d %b %Y')}")
                     st.rerun()
                     
                 if cancel_btn:
@@ -194,53 +196,15 @@ else:
                             st.markdown(f"**{d_title}** 📊 *({tally_string})*")
                             
                             for tx in txs:
-                                if st.session_state.edit_txn_id == tx['id']:
-                                    with st.form(f"edit_form_{tx['id']}"):
-                                        st.write(f"✏️ **Editing Record:** `{tx['id'][:8]}`")
-                                        
-                                        # Parse existing timestamp safely
-                                        try:
-                                            dt_obj = datetime.strptime(tx['timestamp'], "%Y-%m-%d %H:%M")
-                                            hidden_time_str = dt_obj.strftime('%H:%M')
-                                        except:
-                                            dt_obj = datetime.now()
-                                            hidden_time_str = "00:00"
-                                            
-                                        # Only show the Date input (Time is stripped out)
-                                        new_date = st.date_input("Transaction Date", value=dt_obj.date())
-                                            
-                                        # Show the Category purely as read-only text
-                                        st.markdown(f"**Category:** `{tx['category']}` *(If incorrect, please cancel, void this entry, and log a new one)*")
-                                        
-                                        new_notes = st.text_input("Update Notes", value=tx['notes'])
-                                        
-                                        s_col1, s_col2 = st.columns(2)
-                                        with s_col1:
-                                            if st.form_submit_button("💾 Save Changes"):
-                                                # Re-attach the hidden time so the database sorting stays intact
-                                                new_timestamp_str = f"{new_date.strftime('%Y-%m-%d')} {hidden_time_str}"
-                                                # Send the original category right back so it doesn't change
-                                                db.cloud_update_transaction(tx['id'], tx['category'], new_notes, new_timestamp_str)
-                                                st.session_state.edit_txn_id = None
-                                                st.rerun()
-                                        with s_col2:
-                                            if st.form_submit_button("Cancel"):
-                                                st.session_state.edit_txn_id = None
-                                                st.rerun()
-                                else:
-                                    t_col1, t_col2, t_col3 = st.columns([5, 1, 1])
-                                    with t_col1:
-                                        # Removed the time printout here, just showing Category and Notes
-                                        st.markdown(f"**{tx['category']}** — *{tx['notes']}*")
-                                    with t_col2:
-                                        if st.button("✏️ Edit", key=f"edit_btn_{tx['id']}"):
-                                            st.session_state.edit_txn_id = tx['id']
-                                            st.rerun()
-                                    with t_col3:
-                                        if st.button("🗑️ Void", key=f"del_btn_{tx['id']}"):
-                                            db.cloud_delete_transaction(tx["id"])
-                                            st.warning("Ledger line record deleted.")
-                                            st.rerun()
+                                # Clean 2-column layout: Text on the left, simple Void button on the right
+                                t_col1, t_col2 = st.columns([5, 1])
+                                with t_col1:
+                                    st.markdown(f"**{tx['category']}** — *{tx['notes']}*")
+                                with t_col2:
+                                    if st.button("🗑️ Void", key=f"del_btn_{tx['id']}"):
+                                        db.cloud_delete_transaction(tx["id"])
+                                        st.warning("Ledger line record deleted.")
+                                        st.rerun()
 
     elif choice == "⚙️ My Profile & Shifts":
         st.markdown("# ⚙️ Target Settings & Profile Configurations")
