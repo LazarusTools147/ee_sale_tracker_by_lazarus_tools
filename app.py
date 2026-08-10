@@ -209,19 +209,9 @@ else:
                                         # Only show the Date input (Time is stripped out)
                                         new_date = st.date_input("Transaction Date", value=dt_obj.date())
                                             
-                                        # Bulletproof Category List Builder
-                                        all_cats = ["Gaming", "HBB - New", "HBB - Regrade", "TV - New", "TV - Regrade", 
-                                                    "Upgrades - Handset", "Upgrades - Tablet", "Upgrades - Watch", "Upgrades - MBB", "Upgrades - SIM",
-                                                    "New Connections - Handset", "New Connections - Tablet", "New Connections - Watch", "New Connections - MBB", "New Connections - SIM"]
+                                        # Show the Category purely as read-only text
+                                        st.markdown(f"**Category:** `{tx['category']}` *(If incorrect, please cancel, void this entry, and log a new one)*")
                                         
-                                        current_cat = tx['category']
-                                        # If for any reason the database category isn't perfectly in the list, force it in so it doesn't default to Gaming
-                                        if current_cat not in all_cats:
-                                            all_cats.insert(0, current_cat)
-                                            
-                                        current_idx = all_cats.index(current_cat)
-                                            
-                                        new_cat = st.selectbox("Update Category", options=all_cats, index=current_idx)
                                         new_notes = st.text_input("Update Notes", value=tx['notes'])
                                         
                                         s_col1, s_col2 = st.columns(2)
@@ -229,7 +219,8 @@ else:
                                             if st.form_submit_button("💾 Save Changes"):
                                                 # Re-attach the hidden time so the database sorting stays intact
                                                 new_timestamp_str = f"{new_date.strftime('%Y-%m-%d')} {hidden_time_str}"
-                                                db.cloud_update_transaction(tx['id'], new_cat, new_notes, new_timestamp_str)
+                                                # Send the original category right back so it doesn't change
+                                                db.cloud_update_transaction(tx['id'], tx['category'], new_notes, new_timestamp_str)
                                                 st.session_state.edit_txn_id = None
                                                 st.rerun()
                                         with s_col2:
